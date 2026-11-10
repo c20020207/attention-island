@@ -26,6 +26,7 @@ extension Session {
         case .input: Palette.orange
         case .done: failed ? Palette.red : Palette.blue
         case .running: Palette.green
+        case .watching: Palette.secondary
         }
     }
     var symbol: String {
@@ -33,6 +34,7 @@ extension Session {
         case .input: approval ? "hand.raised" : "questionmark.bubble"
         case .done: failed ? "exclamationmark.triangle" : "arrowshape.turn.up.left"
         case .running: ""
+        case .watching: "eye"
         }
     }
     var status: String {
@@ -40,6 +42,7 @@ extension Session {
         case .input: approval ? "Approval needed" : "Question"
         case .done: failed ? "Error" : "Your turn"
         case .running: "Working"
+        case .watching: "Watching"
         }
     }
     var summary: String {
@@ -47,6 +50,7 @@ extension Session {
         case .input: detail.replacingOccurrences(of: #"^(Needs approval|Asking) · "#, with: "", options: .regularExpression)
         case .done: detail
         case .running: prompt.hasPrefix("<") ? "" : prompt  // app-injected events, not something I typed
+        case .watching: detail.isEmpty ? (prompt.hasPrefix("<") ? "" : prompt) : detail
         }
         return plain(raw)
     }
@@ -60,7 +64,7 @@ func plain(_ text: String) -> String {
 
 /// One row on the island: a Claude session or a pull request.
 struct Item: Identifiable, Equatable {
-    enum Group: Int { case needsYou, pullRequests, running }
+    enum Group: Int { case needsYou, pullRequests, running, watching }
     enum Target: Equatable { case claude(String), pr(String), allPullRequests, details(String), sessions }
 
     /// Also the dismissal key, so it must change whenever the thing needs me afresh.
@@ -72,7 +76,7 @@ struct Item: Identifiable, Equatable {
 
 extension Session {
     var item: Item {
-        Item(id: "\(id)@\(since.timeIntervalSince1970)", group: waiting ? .needsYou : .running, title: project,
+        Item(id: "\(id)@\(since.timeIntervalSince1970)", group: waiting ? .needsYou : state == .watching ? .watching : .running, title: project,
              status: status, summary: summary, tint: tint, symbol: state == .running ? nil : symbol,
              since: since, waiting: waiting, target: .claude(id))
     }
@@ -126,7 +130,7 @@ final class Model: ObservableObject {
         dismissed = dismissed.filter { current.contains($0) || ($0.hasPrefix("pr:") && !pullRequestsLoaded) }
         UserDefaults.standard.set(Array(dismissed), forKey: "dismissed")
         let kept = all.filter { !dismissed.contains($0.id) }
-        let shown = [Item.Group.needsYou, .pullRequests, .running].flatMap { g in kept.filter { $0.group == g } }
+        let shown = [Item.Group.needsYou, .pullRequests, .running, .watching].flatMap { g in kept.filter { $0.group == g } }
         if shown != self.items { self.items = shown }
     }
 
@@ -135,7 +139,8 @@ final class Model: ObservableObject {
         update(all, pullRequestsLoaded: pullRequestsLoaded)
     }
 
-    func count(_ group: Item.Group) -> Int { items.filter { $0.group == group && ($0.waiting || group == .running) }.count }
+    /// Pull requests count only when they wait on me; every other group counts all its rows.
+    func count(_ group: Item.Group) -> Int { items.filter { $0.group == group && ($0.waiting || group != .pullRequests) }.count }
     var waitingTint: Color { items.contains { $0.group == .needsYou && $0.tint == Palette.orange } ? Palette.orange : Palette.blue }
 }
 
@@ -283,7 +288,7 @@ struct IslandView: View {
 
     private var list: some View {
         let shown = Array(model.items.prefix(Layout.maxRows))
-        let groups: [(Item.Group, String)] = [(.needsYou, "Needs you"), (.pullRequests, "Pull requests"), (.running, "Running")]
+        let groups: [(Item.Group, String)] = [(.needsYou, "Needs you"), (.pullRequests, "Pull requests"), (.running, "Running"), (.watching, "Watching")]
         let present = groups.filter { g in shown.contains { $0.group == g.0 } }
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(present.enumerated()), id: \.element.0) { index, group in
@@ -412,6 +417,7 @@ struct ItemRow: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(hovered ? 0.07 : 0)))
+        .opacity(item.group == .watching ? 0.6 : 1)  // quiet: it only kept an eye on something for me
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture(perform: open)

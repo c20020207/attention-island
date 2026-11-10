@@ -1,10 +1,10 @@
 import AppKit
 
 struct Session: Identifiable, Equatable {
-    enum State: String { case input, done, running }
+    enum State: String { case input, done, running, watching }
     let id: String, state: State, project: String, detail: String, prompt: String, failed: Bool, since: Date
 
-    var waiting: Bool { state != .running }
+    var waiting: Bool { state == .input || state == .done }
 }
 
 let sessionsDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".attention-island/sessions")
@@ -27,7 +27,7 @@ func readSessions(now: Date = Date()) -> [Session] {
                        failed: e["failed"] as? Bool ?? false,
                        since: Date(timeIntervalSince1970: (e["since"] as? Double) ?? seen))
     }
-    let order: [Session.State] = [.input, .done, .running]
+    let order: [Session.State] = [.input, .done, .running, .watching]
     return sessions.sorted { ($0.state == $1.state) ? $0.since > $1.since
         : order.firstIndex(of: $0.state)! < order.firstIndex(of: $1.state)! }
 }

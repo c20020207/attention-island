@@ -43,6 +43,31 @@ fire(hook_event_name="PreToolUse", tool_name="Bash"); assert entry()["title"] ==
 fire(hook_event_name="StopFailure", last_assistant_message="API error"); assert entry()["failed"] is True
 fire(hook_event_name="SessionEnd"); assert entry() is None
 
-fire(hook_event_name="UserPromptSubmit", session_id="../evil"); assert os.listdir(d) == ["t.jsonl"]
+# App-started turns: quiet unless they block on me, and they never overwrite what was waiting.
+fire(hook_event_name="UserPromptSubmit", session_id="w", prompt="watch the PR")
+fire(hook_event_name="Stop", session_id="w", last_assistant_message="PR is up, watching CI.")
+waiting = entry("w"); assert waiting["state"] == "done"
+fire(hook_event_name="UserPromptSubmit", session_id="w", prompt="<ci-monitor-event>agent-review failed</ci-monitor-event>")
+e = entry("w"); assert (e["state"], e["prompt"]) == ("watching", "watch the PR")
+fire(hook_event_name="PreToolUse", session_id="w", tool_name="Bash"); assert entry("w")["state"] == "watching"
+fire(hook_event_name="PermissionRequest", session_id="w", tool_name="Bash", tool_input={"command": "git push"})
+assert entry("w")["state"] == "input"
+fire(hook_event_name="PostToolUse", session_id="w", tool_name="Bash"); assert entry("w")["state"] == "watching"
+fire(hook_event_name="Stop", session_id="w", last_assistant_message="Still waiting for the review.")
+e = entry("w"); assert (e["state"], e["detail"], e["since"]) == ("done", "PR is up, watching CI.", waiting["since"])
+assert not e["auto"] and e["resume"] is None
+
+fire(hook_event_name="UserPromptSubmit", session_id="q", prompt="do it")
+fire(hook_event_name="PreToolUse", session_id="q", tool_name="Bash")  # still running: nothing waiting to keep
+fire(hook_event_name="UserPromptSubmit", session_id="q", prompt="<side-sessions-event>done</side-sessions-event>")
+fire(hook_event_name="Stop", session_id="q", last_assistant_message="Nothing to do yet.")
+assert (entry("q")["state"], entry("q")["detail"]) == ("watching", "Nothing to do yet.")
+fire(hook_event_name="UserPromptSubmit", session_id="q", prompt="<ci-monitor-event>x</ci-monitor-event>")
+fire(hook_event_name="StopFailure", session_id="q", last_assistant_message="API Error")
+assert (entry("q")["state"], entry("q")["failed"]) == ("done", True)  # a broken watch needs me
+fire(hook_event_name="UserPromptSubmit", session_id="q", prompt="retry")
+assert (entry("q")["state"], entry("q")["auto"]) == ("running", False)
+
+fire(hook_event_name="UserPromptSubmit", session_id="../evil"); assert sorted(os.listdir(d)) == ["q.json", "t.jsonl", "w.json"]
 subprocess.run([sys.executable, "-S", "hook.py"], input="not json", text=True, env=env, check=True)
 print("hook ok")
