@@ -59,7 +59,7 @@ assert not e["auto"] and e["resume"] is None
 
 fire(hook_event_name="UserPromptSubmit", session_id="q", prompt="do it")
 fire(hook_event_name="PreToolUse", session_id="q", tool_name="Bash")  # still running: nothing waiting to keep
-fire(hook_event_name="UserPromptSubmit", session_id="q", prompt="<side-sessions-event>done</side-sessions-event>")
+fire(hook_event_name="UserPromptSubmit", session_id="q", prompt="<ci-monitor-event>checks green</ci-monitor-event>")
 fire(hook_event_name="Stop", session_id="q", last_assistant_message="Nothing to do yet.")
 assert (entry("q")["state"], entry("q")["detail"]) == ("watching", "Nothing to do yet.")
 fire(hook_event_name="UserPromptSubmit", session_id="q", prompt="<ci-monitor-event>x</ci-monitor-event>")
@@ -68,6 +68,15 @@ assert (entry("q")["state"], entry("q")["failed"]) == ("done", True)  # a broken
 fire(hook_event_name="UserPromptSubmit", session_id="q", prompt="retry")
 assert (entry("q")["state"], entry("q")["auto"]) == ("running", False)
 
-fire(hook_event_name="UserPromptSubmit", session_id="../evil"); assert sorted(os.listdir(d)) == ["q.json", "t.jsonl", "w.json"]
+# A background subagent finishing is my result: its tool calls stay quiet, its report waits on me.
+fire(hook_event_name="UserPromptSubmit", session_id="b", prompt="ask the data assistant")
+fire(hook_event_name="Stop", session_id="b", last_assistant_message="Handed it off.")
+fire(hook_event_name="PreToolUse", session_id="b", tool_name="Bash", agent_id="a1"); assert entry("b")["state"] == "done"
+fire(hook_event_name="PermissionRequest", session_id="b", tool_name="Bash", agent_id="a1"); assert entry("b")["state"] == "input"
+fire(hook_event_name="UserPromptSubmit", session_id="b", prompt="<task-notification>done</task-notification>")
+fire(hook_event_name="Stop", session_id="b", last_assistant_message="Here is what it found.")
+assert (entry("b")["state"], entry("b")["detail"]) == ("done", "Here is what it found.")
+
+fire(hook_event_name="UserPromptSubmit", session_id="../evil"); assert sorted(os.listdir(d)) == ["b.json", "q.json", "t.jsonl", "w.json"]
 subprocess.run([sys.executable, "-S", "hook.py"], input="not json", text=True, env=env, check=True)
 print("hook ok")

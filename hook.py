@@ -57,8 +57,8 @@ def last_reply(event):
 
 
 def automated(event):
-    """Turns the desktop app starts itself (CI events, other sessions' notes) arrive as a prompt opening with a tag."""
-    return str(event.get("prompt") or "").lstrip().startswith("<")
+    """PR-watch CI events: turns I didn't ask for. Task results and other sessions' reports are mine, so they count."""
+    return str(event.get("prompt") or "").lstrip().startswith("<ci-monitor-event")
 
 
 def update(event, entry):
@@ -90,6 +90,8 @@ def update(event, entry):
     if name == "UserPromptSubmit":
         return {**entry, "state": "running", "prompt": clip(event.get("prompt"), 200), "detail": "",
                 "auto": False, "resume": None}
+    if event.get("agent_id"):
+        return entry  # a background subagent's tool calls don't mean the main turn is running again
     working = "watching" if entry.get("auto") else "running"
     if name in RUNNING and entry.get("state") != working:
         return {**entry, "state": working, "detail": ""}
