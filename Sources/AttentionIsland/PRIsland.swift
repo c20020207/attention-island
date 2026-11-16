@@ -6,6 +6,8 @@ struct PullRequestList: View {
     let readingHeight: CGFloat
     let openDetails: (PR) -> Void
     @State private var contentHeight: CGFloat = 0
+    @State private var confirmRelease = false
+    @State private var releasing = false
 
     var body: some View {
         if let pr = selected {
@@ -78,6 +80,7 @@ struct PullRequestList: View {
                 TimelineView(.periodic(from: .now, by: 10)) { _ in Text("Updated \(age(at)) ago".replacingOccurrences(of: "now ago", with: "just now")) }
             }
             Spacer()
+            releaseButton
             IslandButton(title: "Refresh", symbol: "arrow.clockwise") { Task { await store.refresh() } }
                 .disabled(store.refreshing)
         }
@@ -85,6 +88,27 @@ struct PullRequestList: View {
         .foregroundStyle(.white.opacity(0.35))
         .padding(.horizontal, 8)
         .padding(.top, 8)
+    }
+
+    /// Dispatches the prod release with its default inputs and opens the run list to watch it.
+    /// Two-step like posting findings: one stray click shouldn't ship prod.
+    private var releaseButton: some View {
+        IslandButton(title: confirmRelease ? "Click again to release prod" : "Release prod",
+                     symbol: "shippingbox", tint: confirmRelease ? Palette.orange : nil) {
+            guard confirmRelease else { return confirmRelease = true }
+            releasing = true
+            Task {
+                do {
+                    _ = try await cli(["gh", "workflow", "run", "release-prod.yml", "--repo", "FreshXYZ/code", "--ref", "main"])
+                    NSWorkspace.shared.open(URL(string: "https://github.com/FreshXYZ/code/actions/workflows/release-prod.yml")!)
+                } catch {
+                    store.error = error.localizedDescription
+                }
+                releasing = false
+                confirmRelease = false
+            }
+        }
+        .disabled(releasing)
     }
 }
 
