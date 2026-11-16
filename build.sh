@@ -35,5 +35,6 @@ python3 install-hooks.py
 pkill -x AttentionIsland || true
 rm -rf "/Applications/Attention Island.app"
 cp -R "$app" /Applications/
-open "/Applications/Attention Island.app"
+# Not `open`: Gatekeeper holds a LaunchServices launch of this ad-hoc build stopped before main, with no dialog.
+nohup "/Applications/Attention Island.app/Contents/MacOS/AttentionIsland" >/dev/null 2>&1 &
 echo "installed /Applications/Attention Island.app"
