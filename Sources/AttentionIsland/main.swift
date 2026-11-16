@@ -104,7 +104,12 @@ extension Session {
     let unassigned = store.mine.filter { !$0.isDraft && $0.ciState == "SUCCESS" && $0.reviewers.isEmpty }.map {
         item($0, "mine", status: "No reviewer", summary: "CI passed", waiting: true)
     }
-    return requested.filter(\.waiting) + unassigned + requested.filter { !$0.waiting }
+    let changesRequested = store.mine.compactMap { pr in
+        let names = pr.changesRequestedBy
+        return names.isEmpty ? nil : item(pr, "changes", status: "Changes requested",
+                                          summary: names.joined(separator: ", "), waiting: true)
+    }
+    return requested.filter(\.waiting) + changesRequested + unassigned + requested.filter { !$0.waiting }
 }
 
 /// What one screen's island is doing. The rows are shared through Model; this is not.

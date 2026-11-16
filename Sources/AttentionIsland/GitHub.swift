@@ -45,6 +45,8 @@ struct PR: Decodable, Identifiable {
         }.filter { !waiting.contains($0.name) && $0.state != "PENDING" }
         return waiting.map { (name: $0, state: "WAITING") } + reviewed
     }
+    /// Reviewers whose latest verdict asks for changes. Re-requesting one moves them back to waiting.
+    var changesRequestedBy: [String] { reviewers.filter { $0.state == "CHANGES_REQUESTED" }.map(\.name) }
     /// Everyone who can review apart from the author and those already waiting, GitHub's suggestions first.
     /// Someone who already reviewed stays in, so picking them re-requests.
     var reviewerCandidates: (suggested: [User], others: [User]) {
@@ -178,10 +180,12 @@ final class Store {
         }
     }
 
-    /// What is waiting on me: review requests the reviewer has finished, and my non-draft PRs with green CI but no reviewer.
+    /// What is waiting on me: review requests the reviewer has finished, my non-draft PRs with green CI but no reviewer,
+    /// and my PRs a reviewer wants changes on.
     var attention: Int {
         requested.filter { if case .done = reviews[$0.reviewKey] { true } else { false } }.count
             + mine.filter { !$0.isDraft && $0.ciState == "SUCCESS" && $0.reviewers.isEmpty }.count
+            + mine.filter { !$0.changesRequestedBy.isEmpty }.count
     }
 
     func refresh() async {
