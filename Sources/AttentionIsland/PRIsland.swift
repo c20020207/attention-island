@@ -317,22 +317,26 @@ struct PullRequestDetail: View {
                 }
             }
             IslandButton(title: "Ask Claude", symbol: "bubble.left", tint: Palette.claude) { askClaude() }
-                .help("Start a Claude conversation about this PR, with the agent review if it has finished")
+                .help("Start a Claude Code session about this PR, with the agent review if it has finished")
             IslandButton(title: "Details") { openDetails(pr) }
             if working { Spinner(tint: Palette.purple).frame(width: 12, height: 12) }
         }
         .disabled(working)
     }
 
-    /// Opens a new chat in the Claude app with the PR link, plus the agent review when one has finished.
+    /// Opens a new Claude Code session in the Claude app with the PR link, plus the agent review when one has finished.
     private func askClaude() {
-        var prompt = "Let's talk about this pull request: \(pr.url.absoluteString)\n\"\(pr.title)\""
+        var prompt = "Let's talk about this pull request (read it with gh): \(pr.url.absoluteString)\n\"\(pr.title)\""
         if case .done(let r) = review {
             prompt += "\n\n\(r.engineName) pre-review (\(r.verdict == "ok" ? "nothing flagged" : "\(r.items.count) flagged")): \(r.summary)"
             for item in r.items { prompt += "\n- \(item.file):\(item.line) \(item.why)" }
         }
-        var url = URLComponents(string: "claude://claude.ai/new")!
+        var url = URLComponents(string: "claude://code/new")!
         url.queryItems = [URLQueryItem(name: "q", value: prompt)]
+        // ponytail: one known checkout; other repos open without a folder
+        if pr.repository.nameWithOwner == "FreshXYZ/code" {
+            url.queryItems?.append(URLQueryItem(name: "folder", value: NSHomeDirectory() + "/Develop/code"))
+        }
         if let link = url.url { NSWorkspace.shared.open(link) }
     }
 
