@@ -144,26 +144,25 @@ func memoryInUse() -> Double? {
     return Double(pages * UInt64(vm_kernel_page_size)) / Double(ProcessInfo.processInfo.physicalMemory)
 }
 
-/// Below this the memory badge hides; at or above it, clicking the badge runs a cleanup.
+/// Below this the memory badge hides.
 let memoryThreshold = 0.8
-/// An env a Claude session wrote in this recently is never stopped, whatever the cleanup picks.
-let recentlyUsed: TimeInterval = 30 * 60
 
-struct CleanupPlan: Decodable {
-    struct Pick: Decodable { let id: String, why: String }
-    let stop: [Pick]
+struct CleanupReport: Decodable {
+    struct Stopped: Decodable { let name: String, why: String }
+    let stopped: [Stopped]
     let summary: String
 }
 
 private let cleanupSchema = """
-{"type":"object","additionalProperties":false,"required":["stop","summary"],
+{"type":"object","additionalProperties":false,"required":["stopped","summary"],
  "properties":{"summary":{"type":"string"},
-  "stop":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","why"],
-   "properties":{"id":{"type":"string"},"why":{"type":"string"}}}}}}
+  "stopped":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["name","why"],
+   "properties":{"name":{"type":"string"},"why":{"type":"string"}}}}}}
 """
 
-/// Asks Claude which environments to stop. It only picks; the island does the stopping, so the agent gets read-only tools.
-func planCleanup(_ envs: [LocalEnv], memory: Double?) async throws -> CleanupPlan {
+/// Has Claude look at what is using memory and stop what's stale. `dryRun` takes away the tools that stop things,
+/// so the report says what it would have stopped.
+func runCleanup(_ envs: [LocalEnv], memory: Double?, dryRun: Bool = false) async throws -> CleanupReport {
     var lines: [String] = []
     for env in envs {
         var branch = ""
@@ -172,11 +171,10 @@ func planCleanup(_ envs: [LocalEnv], memory: Double?) async throws -> CleanupPla
             branch = String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         lines.append("""
-        - id: \(env.id)
-          name: \(env.name)
+        - \(env.name) (\(env.id))
           branch: \(branch.isEmpty ? "unknown" : branch)
-          dev servers (tmux): \(env.tmux.isEmpty ? "none" : env.tmux.joined(separator: ", "))
-          test browsers: \(env.browsers.isEmpty ? "none" : env.browsers.joined(separator: ", "))
+          dev servers (tmux sessions): \(env.tmux.isEmpty ? "none" : env.tmux.joined(separator: ", "))
+          test browsers (agent-browser sessions): \(env.browsers.isEmpty ? "none" : env.browsers.joined(separator: ", "))
           started: \(env.started.map { age($0) + " ago" } ?? "unknown")
           last Claude session activity in the worktree: \(env.lastUsed.map { age($0) + " ago" } ?? "never")
           worktree deleted: \(env.gone)
@@ -184,24 +182,34 @@ func planCleanup(_ envs: [LocalEnv], memory: Double?) async throws -> CleanupPla
         """)
     }
     let prompt = """
-    This Mac is using \(memory.map { "\(Int($0 * 100))%" } ?? "a lot") of its memory. These local test environments \
-    (dev servers in tmux and agent-browser test browsers, grouped by git worktree of FreshXYZ/code) are running:
+    This Mac is using \(memory.map { "\(Int($0 * 100))%" } ?? "a lot") of its memory. \(dryRun ? "Work out" : "Free some up by stopping") \
+    what is stale. Start with `top -l 1 -o mem -n 40 -stats pid,command,mem,cmprs` to see what is using it.
 
+    Local test environments of FreshXYZ/code, grouped by git worktree:
     \(lines.joined(separator: "\n"))
 
-    Pick the ones worth stopping. Stop: anything whose worktree is deleted; test browsers left with no dev servers; \
-    environments with no Claude activity for 3 hours or more; environments whose branch's PR is merged or closed \
-    (check with `gh pr list --repo FreshXYZ/code --head <branch> --state all`). Keep anything with Claude activity in \
-    the last hour. Prefer the biggest memory users, but don't stop a recently used environment just to save memory. \
-    Return each pick's id exactly as given with a short why, and a one or two sentence summary of what you kept and why.
+    Stale: environments whose worktree is deleted; test browsers with no dev servers; environments with no Claude \
+    activity for 3 hours or more; environments whose branch's PR is merged or closed (check with \
+    `gh pr list --repo FreshXYZ/code --head <branch> --state all`); and other leftover background processes such as \
+    orphaned dev servers, watchers or test runners. Stop an environment with `tmux kill-session -t <session>` for each \
+    of its dev servers (then kill any of their processes still alive) and `agent-browser --session <name> close` for \
+    each browser.
+
+    Never touch: anything with Claude activity in the last 30 minutes; GUI apps (don't quit them, mention them in the \
+    summary if they are heavy); the Claude desktop app, its virtual machine or running claude CLI sessions; system \
+    processes; databases and proxies (postgres, alloydb-auth-proxy). Prefer the biggest stale users. When unsure, leave it.
+    \(dryRun ? "This is a dry run: stop nothing, list what you would stop." : "")
+    Report what you stopped (name and a short why) and one or two sentences on what is still using memory.
     """
+    var tools = ["Bash(top:*)", "Bash(ps:*)", "Bash(lsof:*)", "Bash(tmux list-sessions:*)", "Bash(tmux list-panes:*)",
+                 "Bash(agent-browser session list:*)", "Bash(gh pr list:*)", "Bash(gh pr view:*)"]
+    if !dryRun { tools += ["Bash(tmux kill-session:*)", "Bash(agent-browser --session:*)", "Bash(kill:*)", "Bash(pkill:*)"] }
     let data = try await cli(["claude", "-p", prompt, "--output-format", "json", "--json-schema", cleanupSchema,
-                              "--no-session-persistence", "--allowedTools", "Bash(gh pr list:*)", "Bash(gh pr view:*)"],
-                             cwd: home)
+                              "--no-session-persistence", "--allowedTools"] + tools, cwd: home)
     guard let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
         throw GHError(errorDescription: "claude returned no JSON")
     }
     if envelope["is_error"] as? Bool == true { throw GHError(errorDescription: envelope["result"] as? String ?? "claude failed") }
-    guard let structured = envelope["structured_output"] else { throw GHError(errorDescription: "claude returned no plan") }
-    return try JSONDecoder().decode(CleanupPlan.self, from: JSONSerialization.data(withJSONObject: structured))
+    guard let structured = envelope["structured_output"] else { throw GHError(errorDescription: "claude returned no report") }
+    return try JSONDecoder().decode(CleanupReport.self, from: JSONSerialization.data(withJSONObject: structured))
 }

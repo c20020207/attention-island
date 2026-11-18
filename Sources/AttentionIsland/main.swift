@@ -386,7 +386,7 @@ struct MemoryBadge: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .help("Memory is high: click to have Claude stop stale test environments")
+        .help("Memory in use · local environments and cleanup")
     }
 }
 
@@ -597,7 +597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let wasOpen = island.state.environmentsOpen
             for other in islands.values { other.state.pullRequestsOpen = false; other.state.environmentsOpen = false }
             island.state.environmentsOpen = !wasOpen
-            if !wasOpen { Task { await store.cleanUp() } }
+            if !wasOpen { Task { store.envs = await scanEnvs() } }
         case .sessions:
             island.state.environmentsOpen = false
             island.state.pullRequestsOpen = false  // the pointer is on the island, so hovering shows the session list
@@ -631,15 +631,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // --plan-cleanup prints what a cleanup would stop, without stopping anything.
 if CommandLine.arguments.contains("--plan-cleanup") {
     Task {
-        let envs = await scanEnvs()
         do {
-            let plan = try await planCleanup(envs, memory: memoryInUse())
-            for pick in plan.stop {
-                let env = envs.first { $0.id == pick.id }
-                let guarded = env?.lastUsed.map { $0 > .now.addingTimeInterval(-recentlyUsed) } ?? false
-                print("STOP\(guarded ? " (kept: used recently)" : "") \(env?.name ?? pick.id): \(pick.why)")
-            }
-            print("SUMMARY: \(plan.summary)")
+            let report = try await runCleanup(await scanEnvs(), memory: memoryInUse(), dryRun: true)
+            for s in report.stopped { print("WOULD STOP \(s.name): \(s.why)") }
+            print("SUMMARY: \(report.summary)")
         } catch { print("ERROR: \(error.localizedDescription)") }
         exit(0)
     }

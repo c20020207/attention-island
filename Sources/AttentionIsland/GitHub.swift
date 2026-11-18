@@ -226,27 +226,15 @@ final class Store {
         }
     }
 
-    /// Claude picks, the island stops. A run in the last five minutes is shown instead of starting another.
-    func cleanUp(force: Bool = false) async {
-        switch cleanup {
-        case .running: return
-        case .done(_, _, let at) where !force && at > .now.addingTimeInterval(-300): return
-        default: break
-        }
+    /// Claude looks at what is using memory and stops what's stale itself.
+    func cleanUp() async {
+        if case .running = cleanup { return }
         cleanup = .running
         do {
-            let snapshot = await scanEnvs()
-            envs = snapshot
-            let plan = try await planCleanup(snapshot, memory: memory)
-            var stopped: [(name: String, why: String)] = []
-            for pick in plan.stop {
-                guard let env = snapshot.first(where: { $0.id == pick.id }),
-                      env.lastUsed.map({ $0 < .now.addingTimeInterval(-recentlyUsed) }) ?? true else { continue }
-                try? await killEnv(env)
-                stopped.append((env.name, pick.why))
-            }
             envs = await scanEnvs()
-            cleanup = .done(stopped: stopped, summary: plan.summary, at: .now)
+            let report = try await runCleanup(envs, memory: memory)
+            envs = await scanEnvs()
+            cleanup = .done(stopped: report.stopped.map { ($0.name, $0.why) }, summary: report.summary, at: .now)
         } catch {
             cleanup = .failed(error.localizedDescription)
         }

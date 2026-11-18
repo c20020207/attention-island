@@ -218,7 +218,7 @@ struct EnvList: View {
             case .running:
                 HStack(spacing: 8) {
                     Spinner(tint: Palette.claude).frame(width: 12, height: 12)
-                    Text("Claude is picking which environments to stop…").foregroundStyle(Palette.secondary)
+                    Text("Claude is looking for what to stop, usually a minute or two…").foregroundStyle(Palette.secondary)
                 }
             case .done(let stopped, let summary, _):
                 Text(stopped.isEmpty ? "Nothing worth stopping" : "Stopped \(stopped.count)")
@@ -232,7 +232,10 @@ struct EnvList: View {
                 Text("Cleanup failed: \(message)").foregroundStyle(Palette.red).lineLimit(3)
             }
             if !isRunning {
-                IslandButton(title: "Clean up again", symbol: "sparkles") { Task { await store.cleanUp(force: true) } }
+                IslandButton(title: "Clean up with Claude", symbol: "sparkles", tint: Palette.claude, prominent: true) {
+                    Task { await store.cleanUp() }
+                }
+                .help("Claude stops stale test environments and leftover processes, and reports what it did")
             }
         }
         .font(.system(size: 12, weight: .medium))
