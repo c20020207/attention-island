@@ -15,7 +15,7 @@ enum Palette {
 }
 
 enum Layout {
-    static let wing: CGFloat = 150, ear: CGFloat = 6, expandedWidth: CGFloat = 420, pullRequestWidth: CGFloat = 520, readingWidth: CGFloat = 920, readingListWidth: CGFloat = 300, maxRows = 7
+    static let wing: CGFloat = 112, ear: CGFloat = 6, expandedWidth: CGFloat = 420, pullRequestWidth: CGFloat = 520, readingWidth: CGFloat = 920, readingListWidth: CGFloat = 300, maxRows = 7
     static let spring = Animation.spring(response: 0.36, dampingFraction: 0.84)
 }
 
@@ -249,15 +249,7 @@ struct IslandView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                HStack(spacing: 2) {
-                    WingButton(tint: Palette.green, help: "Claude sessions") { open(.sessions) } label: {
-                        HStack(spacing: 6) {
-                            CountRing(count: model.count(.running), tint: Palette.green, spinning: true)
-                            Text("running").font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.secondary)
-                        }
-                    }
-                    MemoryBadge(memory: store.memory) { open(.environments) }
-                }
+                MemoryBadge(memory: store.memory) { open(.environments) }
                 .padding(.horizontal, 2)
                 .frame(width: Layout.wing, alignment: .leading)
                 Color.clear.frame(width: gap)
