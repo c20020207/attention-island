@@ -249,7 +249,11 @@ struct IslandView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                MemoryBadge(memory: store.memory) { open(.environments) }
+                Group {
+                    if (store.memory ?? 0) >= memoryThreshold || state.environmentsOpen {
+                        MemoryBadge(memory: store.memory) { open(.environments) }
+                    }
+                }
                 .padding(.horizontal, 2)
                 .frame(width: Layout.wing, alignment: .leading)
                 Color.clear.frame(width: gap)
@@ -382,7 +386,7 @@ struct MemoryBadge: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .help("Memory in use · local environments")
+        .help("Memory is high: click to have Claude stop stale test environments")
     }
 }
 
@@ -593,7 +597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let wasOpen = island.state.environmentsOpen
             for other in islands.values { other.state.pullRequestsOpen = false; other.state.environmentsOpen = false }
             island.state.environmentsOpen = !wasOpen
-            if !wasOpen { Task { store.envs = await scanEnvs() } }
+            if !wasOpen { Task { await store.cleanUp() } }
         case .sessions:
             island.state.environmentsOpen = false
             island.state.pullRequestsOpen = false  // the pointer is on the island, so hovering shows the session list
@@ -622,6 +626,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func refresh() {
         model.update(readSessions().map(\.item) + pullRequestItems(store), pullRequestsLoaded: store.updatedAt != nil)
     }
+}
+
+// --plan-cleanup prints what a cleanup would stop, without stopping anything.
+if CommandLine.arguments.contains("--plan-cleanup") {
+    Task {
+        let envs = await scanEnvs()
+        do {
+            let plan = try await planCleanup(envs, memory: memoryInUse())
+            for pick in plan.stop {
+                let env = envs.first { $0.id == pick.id }
+                let guarded = env?.lastUsed.map { $0 > .now.addingTimeInterval(-recentlyUsed) } ?? false
+                print("STOP\(guarded ? " (kept: used recently)" : "") \(env?.name ?? pick.id): \(pick.why)")
+            }
+            print("SUMMARY: \(plan.summary)")
+        } catch { print("ERROR: \(error.localizedDescription)") }
+        exit(0)
+    }
+    RunLoop.main.run()
 }
 
 let app = NSApplication.shared

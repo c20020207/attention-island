@@ -189,6 +189,7 @@ struct EnvList: View {
                     let total = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
                     return String(format: "%.1f of %.0f GB", $0 * total, total)
                 })
+                cleanupStatus
                 Rectangle().fill(Palette.rim).frame(height: 1).padding(.vertical, 6).padding(.horizontal, 6)
                 HStack(spacing: 5) {
                     Text("Running worktrees").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.secondary)
@@ -208,6 +209,37 @@ struct EnvList: View {
         .padding(.top, 4)
         .padding(.bottom, 10)
     }
+
+    @ViewBuilder private var cleanupStatus: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            switch store.cleanup {
+            case .idle:
+                EmptyView()
+            case .running:
+                HStack(spacing: 8) {
+                    Spinner(tint: Palette.claude).frame(width: 12, height: 12)
+                    Text("Claude is picking which environments to stop…").foregroundStyle(Palette.secondary)
+                }
+            case .done(let stopped, let summary, _):
+                Text(stopped.isEmpty ? "Nothing worth stopping" : "Stopped \(stopped.count)")
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(stopped.isEmpty ? Palette.secondary : Palette.green)
+                ForEach(Array(stopped.enumerated()), id: \.offset) { _, s in
+                    (Text(s.name).foregroundColor(.white.opacity(0.8)) + Text("  " + s.why).foregroundColor(.white.opacity(0.42)))
+                        .lineLimit(2)
+                }
+                if !summary.isEmpty { Text(summary).foregroundStyle(.white.opacity(0.42)).fixedSize(horizontal: false, vertical: true) }
+            case .failed(let message):
+                Text("Cleanup failed: \(message)").foregroundStyle(Palette.red).lineLimit(3)
+            }
+            if !isRunning {
+                IslandButton(title: "Clean up again", symbol: "sparkles") { Task { await store.cleanUp(force: true) } }
+            }
+        }
+        .font(.system(size: 12, weight: .medium))
+        .padding(.horizontal, 8).padding(.vertical, 6)
+    }
+
+    private var isRunning: Bool { if case .running = store.cleanup { true } else { false } }
 
     private func usage(_ title: String, _ fraction: Double?, detail: String?) -> some View {
         let f = fraction ?? 0
@@ -271,7 +303,7 @@ struct EnvRow: View {
         var bits: [String] = []
         if !env.tmux.isEmpty { bits.append(env.tmux.map { $0.hasSuffix("-be") ? "BE" : $0.hasSuffix("-fe") ? "FE" : $0 }.joined(separator: "+")) }
         if !env.browsers.isEmpty { bits.append("\(env.browsers.count) browser\(env.browsers.count == 1 ? "" : "s")") }
-        if env.rssKB > 0 { bits.append(String(format: "%.1f GB", Double(env.rssKB) / 1_048_576)) }
+        if env.bytes > 0 { bits.append(String(format: "%.1f GB", Double(env.bytes) / 1_073_741_824)) }
         if let s = env.started { bits.append("started \(age(s)) ago") }
         bits.append(env.lastUsed.map { "used \(age($0)) ago" } ?? "no Claude session")
         return bits.joined(separator: " · ").replacingOccurrences(of: "now ago", with: "just now")
