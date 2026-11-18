@@ -164,6 +164,9 @@ final class Store {
     private var hidden: [String: Date] = [:]
     var reviews: [String: ReviewState] = [:]
     var envs: [LocalEnv] = []
+    var cpu: Double?
+    var memory: Double?
+    private var cpuSampler = CPUSampler()
     private var reviewing = false
     private let reviewsFile = appSupport.appendingPathComponent("reviews.json")
 
@@ -172,6 +175,16 @@ final class Store {
         if let data = try? Data(contentsOf: reviewsFile),
            let saved = try? JSONDecoder().decode([String: Review].self, from: data) {
             reviews = saved.mapValues { .done($0) }
+        }
+        Task {
+            var tick = 0
+            while true {
+                cpu = cpuSampler.sample() ?? cpu
+                memory = memoryInUse()
+                if tick % 5 == 0 { envs = await scanEnvs() }
+                tick += 1
+                try? await Task.sleep(for: .seconds(2))
+            }
         }
         Task {
             while true {
@@ -192,7 +205,6 @@ final class Store {
     func refresh() async {
         refreshing = true
         defer { refreshing = false }
-        envs = await scanEnvs()
         do {
             let data = try await cli(["gh", "api", "graphql", "-f", "query=\(query)"])
             let decoder = JSONDecoder()

@@ -15,7 +15,7 @@ enum Palette {
 }
 
 enum Layout {
-    static let wing: CGFloat = 112, ear: CGFloat = 6, expandedWidth: CGFloat = 420, pullRequestWidth: CGFloat = 520, readingWidth: CGFloat = 920, readingListWidth: CGFloat = 300, maxRows = 7
+    static let wing: CGFloat = 150, ear: CGFloat = 6, expandedWidth: CGFloat = 420, pullRequestWidth: CGFloat = 520, readingWidth: CGFloat = 920, readingListWidth: CGFloat = 300, maxRows = 7
     static let spring = Animation.spring(response: 0.36, dampingFraction: 0.84)
 }
 
@@ -65,7 +65,7 @@ func plain(_ text: String) -> String {
 /// One row on the island: a Claude session or a pull request.
 struct Item: Identifiable, Equatable {
     enum Group: Int { case needsYou, pullRequests, running, watching }
-    enum Target: Equatable { case claude(String), pr(String), allPullRequests, details(String), sessions }
+    enum Target: Equatable { case claude(String), pr(String), allPullRequests, details(String), sessions, environments }
 
     /// Also the dismissal key, so it must change whenever the thing needs me afresh.
     let id: String
@@ -117,6 +117,9 @@ final class IslandState: ObservableObject {
     @Published var hovering = false
     /// PR mode: the island lists every PR and stays open until I click its badge or anywhere outside.
     @Published var pullRequestsOpen = false
+    /// Environments mode: same stay-open behaviour as PR mode.
+    @Published var environmentsOpen = false
+    var panelOpen: Bool { pullRequestsOpen || environmentsOpen }
     var size = CGSize.zero
 }
 
@@ -237,20 +240,23 @@ struct IslandView: View {
     let store: Store
     let open: (Item.Target) -> Void
 
-    private var expanded: Bool { state.pullRequestsOpen || (state.hovering && !model.items.isEmpty) }
+    private var expanded: Bool { state.panelOpen || (state.hovering && !model.items.isEmpty) }
     private var reading: Bool { state.pullRequestsOpen && (store.requested + store.mine).contains { $0.id == store.selection } }
     private var width: CGFloat {
-        reading ? Layout.readingWidth : state.pullRequestsOpen ? Layout.pullRequestWidth : expanded ? Layout.expandedWidth : gap + 2 * Layout.wing + 2 * Layout.ear
+        reading ? Layout.readingWidth : state.panelOpen ? Layout.pullRequestWidth : expanded ? Layout.expandedWidth : gap + 2 * Layout.wing + 2 * Layout.ear
     }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                WingButton(tint: Palette.green, help: "Claude sessions") { open(.sessions) } label: {
-                    HStack(spacing: 6) {
-                        CountRing(count: model.count(.running), tint: Palette.green, spinning: true)
-                        Text("running").font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.secondary)
+                HStack(spacing: 2) {
+                    WingButton(tint: Palette.green, help: "Claude sessions") { open(.sessions) } label: {
+                        HStack(spacing: 6) {
+                            CountRing(count: model.count(.running), tint: Palette.green, spinning: true)
+                            Text("running").font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.secondary)
+                        }
                     }
+                    MemoryBadge(memory: store.memory) { open(.environments) }
                 }
                 .padding(.horizontal, 2)
                 .frame(width: Layout.wing, alignment: .leading)
@@ -271,6 +277,8 @@ struct IslandView: View {
             .frame(height: barHeight)
             if state.pullRequestsOpen {
                 PullRequestList(store: store, readingHeight: readingHeight) { open(.details($0.id)) }.transition(.opacity)
+            } else if state.environmentsOpen {
+                EnvList(store: store).transition(.opacity)
             } else if expanded {
                 list.transition(.opacity)
             }
@@ -286,6 +294,7 @@ struct IslandView: View {
         }
         .animation(Layout.spring, value: expanded)
         .animation(Layout.spring, value: state.pullRequestsOpen)
+        .animation(Layout.spring, value: state.environmentsOpen)
         .animation(Layout.spring, value: reading)
         .animation(Layout.spring, value: model.items)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -361,6 +370,31 @@ struct WingButton<Label: View>: View {
         .help(help)
     }
 }
+
+/// Memory in use, tinted by how full it is; clicking opens CPU, memory and the running worktrees.
+struct MemoryBadge: View {
+    let memory: Double?
+    let open: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        let tint = usageTint(memory ?? 0)
+        Button(action: open) {
+            HStack(spacing: 3) {
+                Image(systemName: "memorychip").font(.system(size: 10, weight: .semibold))
+                Text(memory.map { "\(Int($0 * 100))%" } ?? "–").font(.system(size: 12, weight: .bold, design: .rounded)).monospacedDigit()
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 5).padding(.vertical, 3)
+            .background(Capsule().fill(tint.opacity(hovered ? 0.2 : 0)))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help("Memory in use · local environments")
+    }
+}
+
+func usageTint(_ fraction: Double) -> Color { fraction >= 0.85 ? Palette.red : fraction >= 0.7 ? Palette.orange : Palette.green }
 
 /// The PR count beside the notch; clicking it opens every PR, like the old menu bar icon.
 struct PullRequestBadge: View {
@@ -477,7 +511,7 @@ final class Island {
     }
 
     func trackPointer() {
-        if state.pullRequestsOpen {
+        if state.panelOpen {
             if !state.hovering { state.hovering = true }  // keeps the panel taking clicks while PR mode is open
             return
         }
@@ -507,20 +541,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let pinned = CommandLine.arguments.contains("--expanded")
     /// --pull-requests opens PR mode with the first PR unfolded, also for screenshots.
     let pinnedPullRequests = CommandLine.arguments.contains("--pull-requests")
+    /// --environments opens the environments list, also for screenshots.
+    let pinnedEnvironments = CommandLine.arguments.contains("--environments")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         placeIslands()
-        if pinnedPullRequests {
+        if pinnedEnvironments {
+            islands.values.forEach { $0.state.environmentsOpen = true }
+        } else if pinnedPullRequests {
             islands.values.forEach { $0.state.pullRequestsOpen = true }
-            // --list keeps it on the list, for screenshots of the environments section.
-            if !CommandLine.arguments.contains("--list") { Task {
+            Task {
                 while store.updatedAt == nil { try? await Task.sleep(for: .milliseconds(300)) }
                 store.selection = (store.requested + store.mine).first?.id
-            } }
+            }
         } else {
             NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
                 // A click in another app closes PR mode.
-                MainActor.assumeIsolated { self?.islands.values.forEach { $0.state.pullRequestsOpen = false } }
+                MainActor.assumeIsolated { self?.islands.values.forEach { $0.state.pullRequestsOpen = false; $0.state.environmentsOpen = false } }
             }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
@@ -560,7 +597,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .pr(let id):
             store.selection = id
             showPullRequests(on: island)
+        case .environments:
+            let wasOpen = island.state.environmentsOpen
+            for other in islands.values { other.state.pullRequestsOpen = false; other.state.environmentsOpen = false }
+            island.state.environmentsOpen = !wasOpen
+            if !wasOpen { Task { store.envs = await scanEnvs() } }
         case .sessions:
+            island.state.environmentsOpen = false
             island.state.pullRequestsOpen = false  // the pointer is on the island, so hovering shows the session list
         case .allPullRequests:
             if island.state.pullRequestsOpen {
@@ -580,6 +623,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Only one screen at a time gets the big PR panel.
     private func showPullRequests(on island: Island) {
         for other in islands.values where other !== island { other.state.pullRequestsOpen = false }
+        island.state.environmentsOpen = false
         island.state.pullRequestsOpen = true
     }
 

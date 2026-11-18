@@ -54,10 +54,6 @@ struct PullRequestList: View {
             header("My PRs", store.mine.count)
             if store.mine.isEmpty { empty("No open PRs") }
             ForEach(store.mine) { PullRequestRow(store: store, pr: $0, mine: true) }
-            Rectangle().fill(Palette.rim).frame(height: 1).padding(.vertical, 6).padding(.horizontal, 6)
-            header("Local environments", store.envs.count)
-            if store.envs.isEmpty { empty("None running") }
-            ForEach(store.envs) { EnvRow(store: store, env: $0) }
             footer
         }
     }
@@ -181,6 +177,59 @@ struct PullRequestRow: View {
 
 }
 
+/// The island's environments mode: local dev servers and test browsers, stalest first.
+struct EnvList: View {
+    let store: Store
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                usage("CPU", store.cpu, detail: nil)
+                usage("Memory", store.memory, detail: store.memory.map {
+                    let total = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+                    return String(format: "%.1f of %.0f GB", $0 * total, total)
+                })
+                Rectangle().fill(Palette.rim).frame(height: 1).padding(.vertical, 6).padding(.horizontal, 6)
+                HStack(spacing: 5) {
+                    Text("Running worktrees").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.secondary)
+                    Text("\(store.envs.count)").font(.system(size: 12, weight: .semibold)).monospacedDigit().foregroundStyle(.white.opacity(0.3))
+                }
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                if store.envs.isEmpty {
+                    Text("None running").font(.system(size: 12)).foregroundStyle(.white.opacity(0.35)).padding(.horizontal, 8)
+                }
+                ForEach(store.envs) { EnvRow(store: store, env: $0) }
+            }
+        }
+        .scrollIndicators(.never)
+        .frame(maxHeight: 520)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
+        .padding(.bottom, 10)
+    }
+
+    private func usage(_ title: String, _ fraction: Double?, detail: String?) -> some View {
+        let f = fraction ?? 0
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.secondary)
+                Spacer()
+                if let detail { Text(detail).font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.35)) }
+                Text(fraction.map { "\(Int($0 * 100))%" } ?? "–").font(.system(size: 13, weight: .bold, design: .rounded))
+                    .monospacedDigit().foregroundStyle(usageTint(f))
+            }
+            GeometryReader { g in
+                Capsule().fill(.white.opacity(0.08))
+                    .overlay(alignment: .leading) { Capsule().fill(usageTint(f)).frame(width: g.size.width * min(f, 1)) }
+            }
+            .frame(height: 5)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .animation(.easeOut(duration: 0.4), value: f)
+    }
+}
+
 /// One worktree's dev servers and test browsers, stalest first, with a two-click kill.
 struct EnvRow: View {
     let store: Store
@@ -222,6 +271,7 @@ struct EnvRow: View {
         var bits: [String] = []
         if !env.tmux.isEmpty { bits.append(env.tmux.map { $0.hasSuffix("-be") ? "BE" : $0.hasSuffix("-fe") ? "FE" : $0 }.joined(separator: "+")) }
         if !env.browsers.isEmpty { bits.append("\(env.browsers.count) browser\(env.browsers.count == 1 ? "" : "s")") }
+        if env.rssKB > 0 { bits.append(String(format: "%.1f GB", Double(env.rssKB) / 1_048_576)) }
         if let s = env.started { bits.append("started \(age(s)) ago") }
         bits.append(env.lastUsed.map { "used \(age($0)) ago" } ?? "no Claude session")
         return bits.joined(separator: " · ").replacingOccurrences(of: "now ago", with: "just now")
