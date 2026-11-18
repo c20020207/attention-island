@@ -512,10 +512,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         placeIslands()
         if pinnedPullRequests {
             islands.values.forEach { $0.state.pullRequestsOpen = true }
-            Task {
+            // --list keeps it on the list, for screenshots of the environments section.
+            if !CommandLine.arguments.contains("--list") { Task {
                 while store.updatedAt == nil { try? await Task.sleep(for: .milliseconds(300)) }
                 store.selection = (store.requested + store.mine).first?.id
-            }
+            } }
         } else {
             NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
                 // A click in another app closes PR mode.

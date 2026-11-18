@@ -163,6 +163,7 @@ final class Store {
     // ponytail: fixed 10-minute window, check reviewRequests per PR if a quick re-request ever gets hidden
     private var hidden: [String: Date] = [:]
     var reviews: [String: ReviewState] = [:]
+    var envs: [LocalEnv] = []
     private var reviewing = false
     private let reviewsFile = appSupport.appendingPathComponent("reviews.json")
 
@@ -191,6 +192,7 @@ final class Store {
     func refresh() async {
         refreshing = true
         defer { refreshing = false }
+        envs = await scanEnvs()
         do {
             let data = try await cli(["gh", "api", "graphql", "-f", "query=\(query)"])
             let decoder = JSONDecoder()
@@ -208,6 +210,11 @@ final class Store {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    func kill(_ env: LocalEnv) async {
+        do { try await killEnv(env) } catch { self.error = error.localizedDescription }
+        envs = await scanEnvs()
     }
 
     func run(_ args: [String], hiding pr: PR? = nil) async {

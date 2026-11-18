@@ -54,6 +54,10 @@ struct PullRequestList: View {
             header("My PRs", store.mine.count)
             if store.mine.isEmpty { empty("No open PRs") }
             ForEach(store.mine) { PullRequestRow(store: store, pr: $0, mine: true) }
+            Rectangle().fill(Palette.rim).frame(height: 1).padding(.vertical, 6).padding(.horizontal, 6)
+            header("Local environments", store.envs.count)
+            if store.envs.isEmpty { empty("None running") }
+            ForEach(store.envs) { EnvRow(store: store, env: $0) }
             footer
         }
     }
@@ -175,6 +179,53 @@ struct PullRequestRow: View {
         }
     }
 
+}
+
+/// One worktree's dev servers and test browsers, stalest first, with a two-click kill.
+struct EnvRow: View {
+    let store: Store
+    let env: LocalEnv
+    @State private var hovered = false
+    @State private var confirm = false
+    @State private var killing = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: "server.rack").font(.system(size: 12)).foregroundStyle(env.gone ? Palette.red : Palette.secondary)
+                .frame(width: 22, height: 18)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(env.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                (Text(parts).foregroundColor(.white.opacity(0.42))
+                    + Text(env.gone ? " · worktree deleted" : "").foregroundColor(Palette.red))
+                    .font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if killing {
+                Spinner(tint: Palette.red).frame(width: 12, height: 12)
+            } else {
+                IslandButton(title: confirm ? "Click again to kill" : "", symbol: "trash", tint: confirm ? Palette.red : nil) {
+                    guard confirm else { return confirm = true }
+                    killing = true
+                    Task { await store.kill(env); killing = false; confirm = false }
+                }
+                .help("Stop its dev servers and close its test browsers")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(hovered ? 0.07 : 0)))
+        .onHover { hovered = $0; if !$0 { confirm = false } }
+        .help((env.tmux + env.browsers).joined(separator: ", "))
+    }
+
+    private var parts: String {
+        var bits: [String] = []
+        if !env.tmux.isEmpty { bits.append(env.tmux.map { $0.hasSuffix("-be") ? "BE" : $0.hasSuffix("-fe") ? "FE" : $0 }.joined(separator: "+")) }
+        if !env.browsers.isEmpty { bits.append("\(env.browsers.count) browser\(env.browsers.count == 1 ? "" : "s")") }
+        if let s = env.started { bits.append("started \(age(s)) ago") }
+        bits.append(env.lastUsed.map { "used \(age($0)) ago" } ?? "no Claude session")
+        return bits.joined(separator: " · ").replacingOccurrences(of: "now ago", with: "just now")
+    }
 }
 
 /// The right-hand pane of the reading size: everything about one PR, its description filling the height left.
