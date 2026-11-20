@@ -249,7 +249,7 @@ struct IslandView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                Group {
+                ZStack(alignment: .leading) {
                     if (store.memory ?? 0) >= memoryThreshold || state.environmentsOpen {
                         MemoryBadge(memory: store.memory) { open(.environments) }
                     }
