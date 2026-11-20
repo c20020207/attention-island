@@ -551,9 +551,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 store.selection = (store.requested + store.mine).first?.id
             }
         } else {
+            // A click anywhere but an island (another app, or our own PR window) closes the panels.
             NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                // A click in another app closes PR mode.
-                MainActor.assumeIsolated { self?.islands.values.forEach { $0.state.pullRequestsOpen = false; $0.state.environmentsOpen = false } }
+                MainActor.assumeIsolated { self?.closePanels() }
+            }
+            NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                MainActor.assumeIsolated {
+                    if let self, !self.islands.values.contains(where: { $0.panel === event.window }) { self.closePanels() }
+                }
+                return event
             }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
@@ -585,6 +591,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             island.panel.orderOut(nil)
             islands[id] = nil
         }
+    }
+
+    func closePanels() {
+        islands.values.forEach { $0.state.pullRequestsOpen = false; $0.state.environmentsOpen = false }
     }
 
     func open(_ target: Item.Target, from island: Island) {
