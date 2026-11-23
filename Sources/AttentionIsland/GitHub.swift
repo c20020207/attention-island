@@ -169,7 +169,7 @@ final class Store {
     var cleanup: Cleanup = .idle
     enum Cleanup { case idle, running, done(stopped: [(name: String, why: String)], summary: String, at: Date), failed(String) }
     private var cpuSampler = CPUSampler()
-    private var reviewing = false
+    private var reviewing = 0
     private let reviewsFile = appSupport.appendingPathComponent("reviews.json")
 
     init() {
@@ -310,22 +310,23 @@ final class Store {
         pumpReviews()
     }
 
-    /// One review at a time: each is a multi-minute agent run over a full checkout.
+    /// Up to three reviews at once; each is a multi-minute agent run over its own worktree.
     private func pumpReviews() {
-        guard !reviewing, let pr = requested.first(where: {
+        while reviewing < 3, let pr = requested.first(where: {
             if case .queued = reviews[$0.reviewKey] { true } else { false }
-        }) else { return }
-        reviewing = true
-        reviews[pr.reviewKey] = .running
-        Task {
-            do {
-                reviews[pr.reviewKey] = .done(try await reviewPR(pr))
-                saveReviews()
-            } catch {
-                reviews[pr.reviewKey] = .failed(error.localizedDescription)
+        }) {
+            reviewing += 1
+            reviews[pr.reviewKey] = .running
+            Task {
+                do {
+                    reviews[pr.reviewKey] = .done(try await reviewPR(pr))
+                    saveReviews()
+                } catch {
+                    reviews[pr.reviewKey] = .failed(error.localizedDescription)
+                }
+                reviewing -= 1
+                pumpReviews()
             }
-            reviewing = false
-            pumpReviews()
         }
     }
 }

@@ -43,35 +43,44 @@ private let schema = """
    "properties":{"file":{"type":"string"},"line":{"type":"integer"},"why":{"type":"string"}}}}}}
 """
 
+/// Fetch and worktree add write the one shared clone, so they take turns; the agent runs after them overlap.
+@MainActor private var gitTurn: Task<Void, Never>?
+@MainActor private func serialGit<T>(_ body: @escaping () async throws -> T) async throws -> T {
+    let previous = gitTurn
+    let task = Task { await previous?.value; return try await body() }
+    gitTurn = Task { _ = try? await task.value }
+    return try await task.value
+}
+
 /// Checks the PR head out into a throwaway worktree of a blobless clone the app owns, then asks the selected
 /// engine (Codex in a read-only sandbox, or Claude Code limited to read-only tools) for a structured verdict.
 func reviewPR(_ pr: PR) async throws -> Review {
     let engine = ReviewEngine.selected
-    let repo = appSupport.appendingPathComponent("repos/\(pr.repository.nameWithOwner)")
-    if !FileManager.default.fileExists(atPath: repo.appendingPathComponent(".git").path) {
-        try FileManager.default.createDirectory(at: repo.deletingLastPathComponent(), withIntermediateDirectories: true)
-        _ = try await cli(["git", "clone", "-q", "--filter=blob:none", "--no-checkout",
-                           "https://github.com/\(pr.repository.nameWithOwner).git", repo.path])
-    }
-    let git = ["git", "-C", repo.path]
-    let base = pr.baseRefName
-    _ = try await cli(git + ["fetch", "-q", "origin", "+refs/heads/\(base):refs/remotes/origin/\(base)", "pull/\(pr.number)/head"])
-
     let id = UUID().uuidString
     let work = workDir.appendingPathComponent(id)
     let out = workDir.appendingPathComponent("\(id).json")
     let schemaFile = workDir.appendingPathComponent("schema.json")
-    try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
-    try schema.write(to: schemaFile, atomically: true, encoding: .utf8)
-    _ = try await cli(git + ["worktree", "prune"])
-    _ = try await cli(git + ["worktree", "add", "-q", "--detach", work.path, pr.headRefOid])
     defer {
         try? FileManager.default.removeItem(at: work)
         try? FileManager.default.removeItem(at: out)
     }
-
-    let mergeBase = String(decoding: try await cli(git + ["merge-base", "origin/\(base)", pr.headRefOid]), as: UTF8.self)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let mergeBase = try await serialGit {
+        let repo = appSupport.appendingPathComponent("repos/\(pr.repository.nameWithOwner)")
+        if !FileManager.default.fileExists(atPath: repo.appendingPathComponent(".git").path) {
+            try FileManager.default.createDirectory(at: repo.deletingLastPathComponent(), withIntermediateDirectories: true)
+            _ = try await cli(["git", "clone", "-q", "--filter=blob:none", "--no-checkout",
+                               "https://github.com/\(pr.repository.nameWithOwner).git", repo.path])
+        }
+        let git = ["git", "-C", repo.path]
+        let base = pr.baseRefName
+        _ = try await cli(git + ["fetch", "-q", "origin", "+refs/heads/\(base):refs/remotes/origin/\(base)", "pull/\(pr.number)/head"])
+        try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+        try schema.write(to: schemaFile, atomically: true, encoding: .utf8)
+        _ = try await cli(git + ["worktree", "prune"])
+        _ = try await cli(git + ["worktree", "add", "-q", "--detach", work.path, pr.headRefOid])
+        return String(decoding: try await cli(git + ["merge-base", "origin/\(base)", pr.headRefOid]), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     let prompt = """
     You are pre-screening pull request #\(pr.number) "\(pr.title)" for a reviewer deciding whether to approve it. \
     The PR head is checked out in the current directory. Run `git diff \(mergeBase)...HEAD` to see the change \
