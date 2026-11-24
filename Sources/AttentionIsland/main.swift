@@ -325,7 +325,11 @@ struct IslandView: View {
             }
             .padding(.horizontal, 8).padding(.vertical, 6)
             ForEach(rows) { row in
-                ItemRow(item: row, dismiss: { model.dismiss(row) }, open: { open(row.target) })
+                ItemRow(item: row, dismiss: { model.dismiss(row) }, open: {
+                    // Opening a session is dealing with it; its id changes when it next needs me, so it comes back then.
+                    if case .claude = row.target { model.dismiss(row) }
+                    open(row.target)
+                })
             }
         }
     }
