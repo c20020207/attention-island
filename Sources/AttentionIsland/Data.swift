@@ -7,6 +7,16 @@ struct Session: Identifiable, Equatable {
     var waiting: Bool { state == .input || state == .done }
 }
 
+/// Optional settings for one repository you work in, set with `defaults write com.jimmy.attentionisland <key> <value>`:
+/// workRepo (owner/name) scopes the cleanup's merged-PR check, workRepoPath (a local checkout) is the folder
+/// "Ask Claude" opens for that repo's PRs, and releaseWorkflow (a workflow file in workRepo) adds a release button.
+enum WorkRepo {
+    static var name: String? { setting("workRepo") }
+    static var path: String? { setting("workRepoPath").map { NSString(string: $0).expandingTildeInPath } }
+    static var releaseWorkflow: String? { setting("releaseWorkflow") }
+    private static func setting(_ key: String) -> String? { UserDefaults.standard.string(forKey: key).flatMap { $0.isEmpty ? nil : $0 } }
+}
+
 let sessionsDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".attention-island/sessions")
 
 // ponytail: age limits stand in for process liveness, so a crashed agent lingers until its entry ages out.

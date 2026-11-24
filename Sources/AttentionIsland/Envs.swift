@@ -185,12 +185,11 @@ func runCleanup(_ envs: [LocalEnv], memory: Double?, dryRun: Bool = false) async
     This Mac is using \(memory.map { "\(Int($0 * 100))%" } ?? "a lot") of its memory. \(dryRun ? "Work out" : "Free some up by stopping") \
     what is stale. Start with `top -l 1 -o mem -n 40 -stats pid,command,mem,cmprs` to see what is using it.
 
-    Local test environments of FreshXYZ/code, grouped by git worktree:
+    Local test environments, grouped by git worktree:
     \(lines.joined(separator: "\n"))
 
     Stale: environments whose worktree is deleted; test browsers with no dev servers; environments with no Claude \
-    activity for 3 hours or more; environments whose branch's PR is merged or closed (check with \
-    `gh pr list --repo FreshXYZ/code --head <branch> --state all`); and other leftover background processes such as \
+    activity for 3 hours or more;\(WorkRepo.name.map { " environments whose branch's PR is merged or closed (check with `gh pr list --repo \($0) --head <branch> --state all`);" } ?? "") and other leftover background processes such as \
     orphaned dev servers, watchers or test runners. Stop an environment with `tmux kill-session -t <session>` for each \
     of its dev servers (then kill any of their processes still alive) and `agent-browser --session <name> close` for \
     each browser.

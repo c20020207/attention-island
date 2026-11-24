@@ -80,7 +80,7 @@ struct PullRequestList: View {
                 TimelineView(.periodic(from: .now, by: 10)) { _ in Text("Updated \(age(at)) ago".replacingOccurrences(of: "now ago", with: "just now")) }
             }
             Spacer()
-            releaseButton
+            if let repo = WorkRepo.name, let workflow = WorkRepo.releaseWorkflow { releaseButton(repo, workflow) }
             IslandButton(title: "Refresh", symbol: "arrow.clockwise") { Task { await store.refresh() } }
                 .disabled(store.refreshing)
         }
@@ -90,17 +90,17 @@ struct PullRequestList: View {
         .padding(.top, 8)
     }
 
-    /// Dispatches the prod release with its default inputs and opens the run list to watch it.
+    /// Dispatches the release workflow with its default inputs and opens the run list to watch it.
     /// Two-step like posting findings: one stray click shouldn't ship prod.
-    private var releaseButton: some View {
-        IslandButton(title: confirmRelease ? "Click again to release prod" : "Release prod",
+    private func releaseButton(_ repo: String, _ workflow: String) -> some View {
+        IslandButton(title: confirmRelease ? "Click again to release" : "Release",
                      symbol: "shippingbox", tint: confirmRelease ? Palette.orange : nil) {
             guard confirmRelease else { return confirmRelease = true }
             releasing = true
             Task {
                 do {
-                    _ = try await cli(["gh", "workflow", "run", "release-prod.yml", "--repo", "FreshXYZ/code", "--ref", "main"])
-                    NSWorkspace.shared.open(URL(string: "https://github.com/FreshXYZ/code/actions/workflows/release-prod.yml")!)
+                    _ = try await cli(["gh", "workflow", "run", workflow, "--repo", repo, "--ref", "main"])
+                    if let runs = URL(string: "https://github.com/\(repo)/actions/workflows/\(workflow)") { NSWorkspace.shared.open(runs) }
                 } catch {
                     store.error = error.localizedDescription
                 }
@@ -470,8 +470,8 @@ struct PullRequestDetail: View {
         var url = URLComponents(string: "claude://code/new")!
         url.queryItems = [URLQueryItem(name: "q", value: prompt)]
         // ponytail: one known checkout; other repos open without a folder
-        if pr.repository.nameWithOwner == "FreshXYZ/code" {
-            url.queryItems?.append(URLQueryItem(name: "folder", value: NSHomeDirectory() + "/Develop/code"))
+        if pr.repository.nameWithOwner == WorkRepo.name, let path = WorkRepo.path {
+            url.queryItems?.append(URLQueryItem(name: "folder", value: path))
         }
         if let link = url.url { NSWorkspace.shared.open(link) }
     }
